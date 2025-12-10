@@ -3,8 +3,8 @@
     <div class="login-card">
       <div class="brand-header">
         <div class="logo-box">📦</div>
-        <h1 class="app-name">Packaging Studio <span class="pro-tag">PRO</span></h1>
-        <p class="subtitle">企业级智能包装设计工作流</p>
+        <h1 class="app-name">Package Desgin Studio <span class="pro-tag">PRO</span></h1>
+        <p class="subtitle">智能包装设计工作流</p>
       </div>
 
       <el-form

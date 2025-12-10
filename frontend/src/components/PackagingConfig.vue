@@ -4,7 +4,7 @@
       <div class="header-inner">
         <div class="brand">
           <div class="logo-box">📦</div>
-          <span class="app-title">Packaging Studio <span class="version">PRO</span></span>
+          <span class="app-title">Package Desgin Studio <span class="version">PRO</span></span>
         </div>
         <div class="user-profile">
           <span class="welcome-text">Hi, {{ username }}</span>
