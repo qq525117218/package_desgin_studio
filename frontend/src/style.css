@@ -1,0 +1,17 @@
+:root {
+    font-family: Inter, system-ui, Avenir, Helvetica, Arial, sans-serif;
+    line-height: 1.5;
+    font-weight: 400;
+
+    /* 强制设置为浅色模式，防止浏览器跟随系统深色设置 */
+    color-scheme: light;
+}
+
+body {
+    margin: 0;
+    padding: 0;
+    min-width: 320px;
+    min-height: 100vh;
+    /* 确保 body 背景色与我们组件的背景色一致 */
+    background-color: #f2f4f7;
+}
