@@ -71,4 +71,17 @@ public class PlmController : ControllerBase
         // 最终返回给前端的 JSON 结构中，data 字段即为 BrandDetailDto 的内容
         return ApiResponse<object>.Success(brandDetail);
     }
+    
+    [HttpPost("demand/productinfo")]
+    [ProducesResponseType(typeof(ApiResponse<BrandDetailDto>), StatusCodes.Status200OK)]
+    public async Task<ApiResponse<object>> GetProductInfoByProductCode([FromBody] PlmCodeRequestDto request)
+    {
+        // 1. 调用 Service 获取品牌详情对象
+        // 注意：这里复用了 PlmCodeRequestDto，因为入参结构也是 { "code": "..." }
+        var productInfo = await _plmApiService.GetProductInfoByProductCode(request.Code);
+
+        // 2. 直接返回对象，ApiResponse<object>.Success 会自动包裹标准响应结构
+        // 最终返回给前端的 JSON 结构中，data 字段即为 BrandDetailDto 的内容
+        return ApiResponse<object>.Success(productInfo);
+    }
 }

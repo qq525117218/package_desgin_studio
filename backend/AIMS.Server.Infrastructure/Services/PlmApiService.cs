@@ -122,6 +122,50 @@ public class PlmApiService : IPlmApiService
             throw; // 抛出异常由全局过滤器处理
         }
     }
+    
+    public async Task<ProductInfoDto> GetProductInfoByProductCode(string code)
+    {
+        // 1. 构建请求载荷
+        var payload = new { code = code };
+    
+        // 2. 生成签名
+        var queryParam = GenSign(payload);
+
+        try
+        {
+            // 3. 构建 URL
+            var url = _options.BaseUrl.AppendPathSegment("/Demand/GetProductInfoByProductCode");
+            _logger.LogInformation("Calling PLM BrandDetail API: {Url}, Code: {Code}", url, code);
+
+            // 4. 发起 HTTP POST 请求
+            var response = await url
+                .SetQueryParams(queryParam)
+                .WithTimeout(TimeSpan.FromSeconds(15))
+                .PostJsonAsync(payload);
+
+            var responseString = await response.GetStringAsync();
+
+            // 5. 反序列化 ✅ [修正]
+            // 既然 JSON 的 data 是 [ { ... } ]，这里必须用 List 接住
+            var plmResult = JsonConvert.DeserializeObject<PlmResponse<List<ProductInfoDto>>>(responseString);
+
+            // 6. 校验结果
+            if (plmResult == null) throw new Exception("PLM 响应为空");
+            // 注意：有些接口 code=0 代表成功，success=true 也代表成功，这里双重校验
+            if (!plmResult.Success) throw new Exception($"PLM 业务异常: {plmResult.Message}");
+
+            // 7. 返回数据 ✅ [修正]
+            // 取列表第一条，如果 data 为空数组则返回空对象
+            var firstItem = plmResult.Data?.FirstOrDefault();
+        
+            return firstItem ?? new ProductInfoDto();
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "获取产品信息失败");
+            throw; 
+        }
+    }
 
     // 签名方法保持不变...
     private PlmBaseQueryParam GenSign<T>(T signData) where T : class

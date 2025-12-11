@@ -9,7 +9,7 @@ using Aspose.PSD.FileFormats.Psd.Layers.FillSettings;
 using Aspose.PSD.FileFormats.Psd.Layers.SmartObjects;
 using Aspose.PSD.ImageOptions;
 using Aspose.PSD.ProgressManagement;
-using System.Text; // 引入 StringBuilder
+using System.Text;
 
 // 显式指定 Aspose 类型以解决与 System.Drawing 的冲突
 using Color = Aspose.PSD.Color;
@@ -27,10 +27,6 @@ public class AsposePsdGenerator : IPsdGenerator
 {
     private const float DPI = 300f; 
     
-    // --- 条形码尺寸 ---
-    private const double BARCODE_WIDTH_CM = 10.0; 
-    private const double BARCODE_HEIGHT_CM = 5.0; 
-
     // --- 固定图标尺寸 ---
     private const double ICON_WIDTH_CM = 10;
     private const double ICON_HEIGHT_CM = 5;
@@ -41,7 +37,14 @@ public class AsposePsdGenerator : IPsdGenerator
 
     private static readonly HttpClient _httpClient = new HttpClient();
     
-
+    // 内部结构用于传递计算后的布局信息
+    private struct BarcodeLayout
+    {
+        public bool Rotate90;
+        public Point Position;
+        public int Width;
+        public int Height;
+    }
 
     public async Task<byte[]> GeneratePsdAsync(PackagingDimensions dim, PackagingAssets assets, Action<int, string>? onProgress = null)
     {
@@ -113,6 +116,7 @@ public class AsposePsdGenerator : IPsdGenerator
                     await File.WriteAllBytesAsync(tempPdfPath, pdfBytes);
 
                     onProgress?.Invoke(75, "正在处理条形码智能对象...");
+                    // 调用核心处理方法
                     EmbedBarcodePdfAsSmartObject(tempPsdPath, tempPdfPath, dim);
                 }
             }
@@ -165,6 +169,176 @@ public class AsposePsdGenerator : IPsdGenerator
             CleanupTempFile(tempPdfPath);
         }
     }
+
+    // ====================================================================================
+    // ⬇️ 核心条码处理 (v7.0 - 右下角对齐 + 保持缩小 + 防止位置跳动)
+    // ====================================================================================
+
+    private void EmbedBarcodePdfAsSmartObject(string targetPsdPath, string pdfPath, PackagingDimensions dim)
+    {
+        if (!File.Exists(pdfPath) || !File.Exists(targetPsdPath)) return;
+
+        string tempOutputPath = targetPsdPath + ".tmp";
+
+        try
+        {
+            // 1. 获取 PDF 信息
+            var pdfDoc = new Aspose.Words.Document(pdfPath);
+            var pageInfo = pdfDoc.GetPageInfo(0);
+            
+            double originalWidthPt = pageInfo.WidthInPoints;
+            double originalHeightPt = pageInfo.HeightInPoints;
+
+            using (var targetImage = (PsdImage)Aspose.PSD.Image.Load(targetPsdPath))
+            {
+                float targetDpiX = (float)targetImage.HorizontalResolution;
+                float targetDpiY = (float)targetImage.VerticalResolution;
+
+                // 2. 计算布局 (包括新的右下角对齐逻辑)
+                var layout = CalculateBarcodeLayout(dim, originalWidthPt, originalHeightPt, targetDpiX, targetDpiY);
+
+                // 3. 将 PDF 渲染为图像
+                var saveOptions = new Aspose.Words.Saving.ImageSaveOptions(Aspose.Words.SaveFormat.Png)
+                {
+                    PageSet = new Aspose.Words.Saving.PageSet(0), 
+                    Resolution = targetDpiX,                       
+                    UseHighQualityRendering = true,
+                    PaperColor = System.Drawing.Color.Transparent 
+                };
+
+                using var pageImageStream = new MemoryStream();
+                pdfDoc.Save(pageImageStream, saveOptions);
+                pageImageStream.Position = 0;
+
+                // 4. 加载为 PSD RasterImage
+                using (var loadedImage = (RasterImage)Aspose.PSD.Image.Load(pageImageStream))
+                {
+                    // 4.1 应用旋转
+                    if (layout.Rotate90)
+                    {
+                        loadedImage.RotateFlip(RotateFlipType.Rotate90FlipNone);
+                    }
+
+                    // 4.2 调整大小 (Resizing)
+                    // 确保放入图层的像素尺寸与计算一致
+                    if (loadedImage.Width != layout.Width || loadedImage.Height != layout.Height)
+                    {
+                        loadedImage.Resize(layout.Width, layout.Height, ResizeType.LanczosResample);
+                    }
+
+                    // 5. 直接创建图层并写入像素 (防止 Ctrl+T 跳动)
+                    var barcodeLayer = targetImage.AddRegularLayer();
+                    barcodeLayer.DisplayName = "BARCODE_TEMP"; 
+                    
+                    barcodeLayer.Left = layout.Position.X;
+                    barcodeLayer.Top = layout.Position.Y;
+                    barcodeLayer.Right = layout.Position.X + layout.Width;
+                    barcodeLayer.Bottom = layout.Position.Y + layout.Height;
+
+                    // 必须使用 LoadArgb32Pixels 保持透明度
+                    var pixels = loadedImage.LoadArgb32Pixels(loadedImage.Bounds);
+                    barcodeLayer.SaveArgb32Pixels(new Rectangle(0, 0, layout.Width, layout.Height), pixels);
+
+                    // 6. 转换为智能对象
+                    var smartLayer = targetImage.SmartObjectProvider.ConvertToSmartObject(new[] { barcodeLayer });
+                    
+                    smartLayer.DisplayName = "BARCODE"; 
+                    // 再次确认位置
+                    smartLayer.Left = layout.Position.X;
+                    smartLayer.Top = layout.Position.Y;
+                }
+
+                targetImage.Save(tempOutputPath, new PsdOptions { 
+                    CompressionMethod = CompressionMethod.RLE 
+                });
+            } 
+
+            if (File.Exists(targetPsdPath)) File.Delete(targetPsdPath);
+            File.Move(tempOutputPath, targetPsdPath);
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine($"[Warning] 条形码渲染失败: {ex.Message}");
+            if (File.Exists(tempOutputPath)) try { File.Delete(tempOutputPath); } catch { }
+        }
+    }
+
+    private BarcodeLayout CalculateBarcodeLayout(PackagingDimensions dim, double origW_Pt, double origH_Pt, float dpiX, float dpiY)
+    {
+        var layout = new BarcodeLayout();
+
+        // 1. 强制旋转 90 度
+        layout.Rotate90 = true;
+
+        // 2. 获取 PDF 原始像素尺寸
+        double rawPxW = (origW_Pt * dpiX) / 72.0;
+        double rawPxH = (origH_Pt * dpiY) / 72.0;
+
+        // 3. 动态计算缩放比例
+        int panelWidthPx = CmToPixels(dim.Width);
+        int safeMarginTotalPx = CmToPixels(1.2); 
+        int targetWidthPx = panelWidthPx - safeMarginTotalPx;
+
+        // [保持缩放] 缩放比例为 0.25 (缩小1倍后的效果)
+        double scale = ((double)targetWidthPx / rawPxH) * 0.25; 
+
+        // 4. 计算最终尺寸
+        double finalW_Raw = rawPxW * scale;
+        double finalH_Raw = rawPxH * scale;
+
+        if (layout.Rotate90)
+        {
+            layout.Width = (int)Math.Round(finalH_Raw);  
+            layout.Height = (int)Math.Round(finalW_Raw); 
+        }
+        else
+        {
+            layout.Width = (int)Math.Round(finalW_Raw);
+            layout.Height = (int)Math.Round(finalH_Raw);
+        }
+
+        // 5. 纵向安全检查
+        int panelHeightPx = CmToPixels(dim.Height);
+        int maxAllowedHeight = panelHeightPx - CmToPixels(2.0);
+
+        if (layout.Height > maxAllowedHeight) 
+        {
+            double shrinkScale = (double)maxAllowedHeight / layout.Height;
+            layout.Width = (int)(layout.Width * shrinkScale);
+            layout.Height = (int)(layout.Height * shrinkScale);
+        }
+
+        // 6. 定位逻辑 (修改为：右侧面面板的 右下角对齐)
+        var X_px = CmToPixels(dim.Length);
+        var Y_px = CmToPixels(dim.Height);
+        var Z_px = CmToPixels(dim.Width);
+        var A_px = CmToPixels(dim.BleedLeftRight);
+        var B_px = CmToPixels(dim.BleedTopBottom);
+
+        int panelStartX = A_px + Z_px + X_px;       
+        int panelStartY = B_px + Z_px;              
+        int panelEndY = panelStartY + Y_px;         
+
+        // [修改 X轴] 右对齐逻辑
+        // 面板结束X = StartX + 面板宽(Z)
+        // 目标X = 面板结束X - 右边距 - 条码宽
+        int sideMarginPx = CmToPixels(0.5); // 右侧留白 0.5cm (贴近折痕但有空隙)
+        int panelEndX = panelStartX + Z_px;
+        int destX = panelEndX - sideMarginPx - layout.Width;
+
+        // [修改 Y轴] 底部对齐 (下沉)
+        // 之前是留白 1.2cm，现在为了对应红色框位置，减少留白让它更靠下
+        int bottomMarginPx = CmToPixels(0.8); // 底部留白 0.8cm (让它沉到底部)
+        int destY = panelEndY - bottomMarginPx - layout.Height;
+
+        layout.Position = new Point(destX, destY);
+        
+        return layout;
+    }
+
+    // ====================================================================================
+    // ⬇️ 其他辅助方法 (保持不变)
+    // ====================================================================================
 
     private void EmbedFixedAssetAsSmartObject(string targetPsdPath, string assetPath, PackagingDimensions dim)
     {
@@ -304,108 +478,6 @@ public class AsposePsdGenerator : IPsdGenerator
         File.Move(tempOutputPath, targetPsdPath);
     }
 
-    private void EmbedBarcodePdfAsSmartObject(string targetPsdPath, string pdfPath, PackagingDimensions dim)
-    {
-        if (!File.Exists(pdfPath) || !File.Exists(targetPsdPath)) return;
-
-        string tempOutputPath = targetPsdPath + ".tmp";
-
-        try
-        {
-            var pdfAsWordDoc = new Aspose.Words.Document(pdfPath);
-
-            using (var targetImage = (PsdImage)Aspose.PSD.Image.Load(targetPsdPath))
-            {
-                float targetDpiX = (float)targetImage.HorizontalResolution;
-                float targetDpiY = (float)targetImage.VerticalResolution;
-
-                var saveOptions = new Aspose.Words.Saving.ImageSaveOptions(Aspose.Words.SaveFormat.Png)
-                {
-                    PageSet = new Aspose.Words.Saving.PageSet(0), 
-                    Resolution = targetDpiX,                       
-                    UseHighQualityRendering = true,
-                    PaperColor = System.Drawing.Color.Transparent 
-                };
-
-                using var pageImageStream = new MemoryStream();
-                pdfAsWordDoc.Save(pageImageStream, saveOptions);
-                pageImageStream.Position = 0;
-
-                using var loadedImage = Aspose.PSD.Image.Load(pageImageStream);
-                var raster = (RasterImage)loadedImage;
-                raster.CacheData();
-
-                const double cmToInch = 1.0 / 2.54;
-                int targetWidthPx = (int)Math.Round(BARCODE_WIDTH_CM * cmToInch * targetDpiX);
-                int targetHeightPx = (int)Math.Round(BARCODE_HEIGHT_CM * cmToInch * targetDpiY);
-
-                using var srcPsd = CreateScaledContainer(raster, targetWidthPx, targetHeightPx, targetDpiX, targetDpiY);
-
-                var pos = CalculateBarcodePosition(targetImage, dim, targetWidthPx, targetHeightPx);
-
-                var placeholder = targetImage.AddRegularLayer();
-                placeholder.DisplayName = "Barcode_Placeholder";
-                placeholder.Left = pos.X;
-                placeholder.Top = pos.Y;
-                placeholder.Right = pos.X + targetWidthPx;
-                placeholder.Bottom = pos.Y + targetHeightPx;
-
-                var smartLayer = targetImage.SmartObjectProvider.ConvertToSmartObject(new[] { placeholder });
-                smartLayer.DisplayName = "BARCODE"; 
-                
-                var resolutionSetting = new ResolutionSetting(targetDpiX, targetDpiY);
-                smartLayer.ReplaceContents(srcPsd, resolutionSetting);
-                smartLayer.ContentsBounds = new Aspose.PSD.Rectangle(0, 0, targetWidthPx, targetHeightPx);
-
-                targetImage.Save(tempOutputPath, new PsdOptions { 
-                    CompressionMethod = CompressionMethod.RLE 
-                });
-            } 
-
-            if (File.Exists(targetPsdPath)) File.Delete(targetPsdPath);
-            File.Move(tempOutputPath, targetPsdPath);
-        }
-        catch (Exception ex)
-        {
-            Console.WriteLine($"[Warning] 条形码渲染失败，已跳过置入: {ex.Message}");
-            if (File.Exists(tempOutputPath)) try { File.Delete(tempOutputPath); } catch { }
-        }
-    }
-
-    private PsdImage CreateScaledContainer(RasterImage source, int width, int height, float dpiX, float dpiY)
-    {
-        var container = new PsdImage(width, height);
-        container.SetResolution(dpiX, dpiY);
-
-        double scaleX = (double)width / source.Width;
-        double scaleY = (double)height / source.Height;
-        double scale = Math.Min(scaleX, scaleY); 
-
-        int newW = Math.Max(1, (int)(source.Width * scale));
-        int newH = Math.Max(1, (int)(source.Height * scale));
-
-        if (source.Width != newW || source.Height != newH)
-        {
-            source.Resize(newW, newH, ResizeType.LanczosResample);
-        }
-
-        var layer = container.AddRegularLayer();
-        layer.Left = 0; layer.Top = 0; layer.Right = width; layer.Bottom = height;
-        
-        int offX = (width - newW) / 2;
-        int offY = (height - newH) / 2;
-
-        var pixels = source.LoadArgb32Pixels(source.Bounds);
-        var destRect = new Rectangle(offX, offY, newW, newH);
-        layer.SaveArgb32Pixels(destRect, pixels);
-
-        return container;
-    }
-
-    // ====================================================================================
-    // ⬇️ 核心定位算法
-    // ====================================================================================
-
     private Point CalculateLogoPosition(PsdImage psdImage, PackagingDimensions dim, int widthPx, int heightPx)
     {
         var X = CmToPixels(dim.Length);
@@ -422,30 +494,6 @@ public class AsposePsdGenerator : IPsdGenerator
         int topFoldY = B + Z;
         int marginTop = (int)(Y * 0.12);
         int destY = topFoldY + marginTop;
-
-        return new Point(destX, destY);
-    }
-
-    private Point CalculateBarcodePosition(PsdImage psdImage, PackagingDimensions dim, int widthPx, int heightPx)
-    {
-        var X = CmToPixels(dim.Length);
-        var Y = CmToPixels(dim.Height);
-        var Z = CmToPixels(dim.Width);
-        var A = CmToPixels(dim.BleedLeftRight);
-        var B = CmToPixels(dim.BleedTopBottom);
-
-        // Right Side 区域 (第3个面)
-        int panelLeft = A + Z + X;
-        int panelWidth = Z; 
-        
-        int centerX = panelLeft + (panelWidth / 2);
-        int destX = centerX - (widthPx / 2) ;
-
-        // 垂直定位 (底部折线向上 10%)
-        int bottomFoldY = B + Z + Y;
-        int marginBottom = (int)(Y * 0.10);
-
-        int destY = bottomFoldY - marginBottom - heightPx;
 
         return new Point(destX, destY);
     }
@@ -488,7 +536,6 @@ public class AsposePsdGenerator : IPsdGenerator
         CreateShapeLayer(psdImage, "bottom", X, Z, A + (2 * Z) + X, B + Z + Y, Color.White);
     }
 
-    // ✅ [修改] 重构 DrawInfoPanelAssets，整体下移以避开出血位
     private void DrawInfoPanelAssets(PsdImage psdImage, PackagingAssets assets, PackagingDimensions dim)
     {
         var info = assets.Texts.InfoPanel;
@@ -503,14 +550,12 @@ public class AsposePsdGenerator : IPsdGenerator
         var B = CmToPixels(dim.BleedTopBottom);
         var C = CmToPixels(dim.InnerBleed);
 
-        // 核心修正：使用 Top Fold Line (B + Z) 作为基准，并增加 80px 的安全距离
-        // 之前是 B + Z - 2*C，这会导致内容偏上进入出血区域
         int topFoldY = B + Z;
-        int safeTopMargin = 80; // ✅ 增加顶部安全边距
+        int safeTopMargin = 80; 
 
         // --- 1. 背面 (Back Panel) ---
         int backStartX = A + (2 * Z) + X;
-        int backStartY = topFoldY + safeTopMargin; // ✅ 从折线下方 80px 开始
+        int backStartY = topFoldY + safeTopMargin; 
         int backPanelWidth = A + X; 
 
         int padding = 30;
@@ -520,50 +565,41 @@ public class AsposePsdGenerator : IPsdGenerator
 
         if (info != null)
         {
-            // 产品英文名
             CreateRichTextLayer(psdImage, "PRODUCT_NAME_TXT", "PRODUCT NAME:", info.ProductName,
                 new Rectangle(backStartX + padding, currentY, textAreaWidth, 50), fontSize);
             currentY += 60;
 
-            // 成分
             CreateRichTextLayer(psdImage, "INGREDIENTS_TXT", "INGREDIENTS:", info.Ingredients,
                 new Rectangle(backStartX + padding, currentY, textAreaWidth, 100), fontSize);
             currentY += 110;
 
-            // 警告语
             CreateRichTextLayer(psdImage, "WARNINGS_TXT", "WARNINGS:", info.Warnings,
                 new Rectangle(backStartX + padding, currentY, textAreaWidth, 80), fontSize);
             currentY += 90;
 
-            // 制造商
             if (main != null)
             {
                 CreateRichTextLayer(psdImage, "MANUFACTURER_TXT", "MANUFACTURER:", main.Manufacturer,
                     new Rectangle(backStartX + padding, currentY, textAreaWidth, 50), fontSize);
                 currentY += 60;
 
-                // 制造商地址
                 CreateRichTextLayer(psdImage, "MANUFACTURER_ADD_TXT", "ADDRESS:", main.Address,
                     new Rectangle(backStartX + padding, currentY, textAreaWidth, 50), fontSize);
                 currentY += 60;
             }
 
-            // 保质期
             CreateRichTextLayer(psdImage, "SHELF_LIFE_TXT", "SHELF LIFE:", info.ShelfLife,
                 new Rectangle(backStartX + padding, currentY, textAreaWidth, 50), fontSize);
             currentY += 60;
 
-            // 原产国
             CreateRichTextLayer(psdImage, "MADE_IN _TXT", "MADE IN:", info.Origin,
                 new Rectangle(backStartX + padding, currentY, textAreaWidth, 50), fontSize);
             
-            // 含量（背面）- 保持底部对齐逻辑
             if (main != null && !string.IsNullOrWhiteSpace(main.CapacityInfoBack))
             {
                 int areaHeight = 100;
-                // 底部折线 = B + Z + Y
                 int bottomFoldY = B + Z + Y; 
-                int capY = bottomFoldY - padding - areaHeight; // ✅ 确保在底部折线之上
+                int capY = bottomFoldY - padding - areaHeight; 
 
                 CreateRichTextLayer(psdImage, "NET_BACK_TXT", "", main.CapacityInfoBack,
                     new Rectangle(backStartX + padding, capY, textAreaWidth, areaHeight), 10f);
@@ -572,7 +608,7 @@ public class AsposePsdGenerator : IPsdGenerator
 
         // --- 2. 右侧面 (Right Side Panel) ---
         int rightStartX = A + Z + X;
-        int rightStartY = topFoldY + safeTopMargin; // ✅ 同样整体下移
+        int rightStartY = topFoldY + safeTopMargin; 
         int rightPanelWidth = Z;
         
         int rightCurrentY = rightStartY;
@@ -580,18 +616,15 @@ public class AsposePsdGenerator : IPsdGenerator
 
         if (info != null)
         {
-            // 建议使用方法
             CreateRichTextLayer(psdImage, "SAFEUSE_TXT", "DIRECTIONS:", info.Directions,
                 new Rectangle(rightStartX + padding, rightCurrentY, rightTextAreaWidth, 150), fontSize);
             rightCurrentY += 160;
 
-            // 产品优势/利益点
             CreateRichTextLayer(psdImage, "FUNCTIONS&BENEFITS_TXT", "BENEFITS:", info.Benefits,
                 new Rectangle(rightStartX + padding, rightCurrentY, rightTextAreaWidth, 150), fontSize);
         }
     }
 
-    // ✅ [修改] 重构 DrawMainPanelAssets，整体下移
     private void DrawMainPanelAssets(PsdImage psdImage, PackagingAssets assets, PackagingDimensions dim)
     {
         var main = assets.Texts.MainPanel;
@@ -604,17 +637,14 @@ public class AsposePsdGenerator : IPsdGenerator
         var A = CmToPixels(dim.BleedLeftRight);
         var B = CmToPixels(dim.BleedTopBottom);
 
-        // 正面区域
         int panelStartX = A + Z;
         
-        // 核心修正：基准线设为 Top Fold (B + Z)，并加大 Padding
         int topFoldY = B + Z;
-        int topPadding = 80; // ✅ 增加顶部安全边距
+        int topPadding = 80; 
 
         int contentWidth = X - (2 * 40);
         int contentStartX = panelStartX + 40;
 
-        // 英文产品名（正面）
         if (!string.IsNullOrWhiteSpace(info.ProductName))
         {
             int titleHeight = 80;
@@ -622,10 +652,9 @@ public class AsposePsdGenerator : IPsdGenerator
             CreateRichTextLayer(psdImage, "PRODUCT_NAME_FRONT_TXT", "", info.ProductName, rect, 12f);
         }
 
-        // 正面卖点文案
         if (main.SellingPoints != null && main.SellingPoints.Count > 0)
         {
-            int startY = topFoldY + (int)(Y * 0.35); // 相对 Top Fold 保持 35% 下移
+            int startY = topFoldY + (int)(Y * 0.35); 
             int lineHeight = 60;
             float fontSize = 8f;
 
@@ -641,13 +670,11 @@ public class AsposePsdGenerator : IPsdGenerator
             }
         }
 
-        // 含量（正面）- 底部定位
         if (!string.IsNullOrWhiteSpace(main.CapacityInfo))
         {
             int capacityHeight = 100;
-            // 底部折线 = B + Z + Y
             int bottomFoldY = B + Z + Y;
-            int currentBottomY = bottomFoldY - 40 - capacityHeight; // ✅ 确保在底部折线之上
+            int currentBottomY = bottomFoldY - 40 - capacityHeight; 
             
             var rect = new Rectangle(contentStartX, currentBottomY, contentWidth, capacityHeight);
             CreateRichTextLayer(psdImage, "NET_FRONT_TXT", "", main.CapacityInfo, rect, 10f);
@@ -789,16 +816,6 @@ public class AsposePsdGenerator : IPsdGenerator
         }
     }
 
-    /// <summary> 
-    /// [架构优化] 字符串标准化工具 v2.0
-    /// 使用 Unicode Normalization (NFKC) 自动处理 99% 的全角/兼容性字符。
-    /// 结合手动映射处理语义标点。
-    /// </summary>
-    /// [架构优化 v3.0] 字符串标准化工具
-    /// 策略：
-    /// 1. 语义降级：强制将 CJK 专用标点（如顿号、方括号）映射为 ASCII 近似符。
-    /// 2. 兼容性标准化：使用 NFKC 自动处理全角字母/数字 (Ａ->A, １->1)。
-    /// </summary>
     private string ToHalfWidth(string input)
     {
         if (string.IsNullOrEmpty(input)) return input;
@@ -807,54 +824,39 @@ public class AsposePsdGenerator : IPsdGenerator
 
         foreach (char c in input)
         {
-            // --- 阶段 1: 语义强制映射 (Semantic Mapping) ---
-            // 处理 NFKC 不会转换，但我们需要它变成 ASCII 的符号
             char mappedChar = c switch
             {
-                // 常见分隔符
-                '、' => ',',  // Ideographic Comma
-                '，' => ',',  // Fullwidth Comma (虽然 NFKC 会转，但显式处理更稳)
-                '。' => '.',  // Ideographic Full Stop
-                '：' => ':',  // Fullwidth Colon
-                '；' => ';',  // Fullwidth Semicolon
-                
-                // 括号类 (包装文案常用)
-                '【' => '[',  // Black Lenticular Bracket Open
-                '】' => ']',  // Black Lenticular Bracket Close
-                '「' => '[',  // Corner Bracket Open
-                '」' => ']',  // Corner Bracket Close
-                '『' => '[',  // White Corner Bracket Open
-                '』' => ']',  // White Corner Bracket Close
-                '《' => '<',  // Double Angle Bracket Open
-                '》' => '>',  // Double Angle Bracket Close
-                '（' => '(',  // Fullwidth Parenthesis Open
-                '）' => ')',  // Fullwidth Parenthesis Close
-
-                // 连接符与特殊符号
-                '～' => '~',  // Wave Dash
-                '〜' => '~',  // Another Wave Dash variant
-                '—' => '-',   // Em Dash
-                '–' => '-',   // En Dash
-                '·' => '.',   // Middle Dot (成分表中常用，映射为点或空格均可，此处选点)
-                
-                // 引号 (将各类弯引号统一为直引号)
+                '、' => ',',  
+                '，' => ',',  
+                '。' => '.',  
+                '：' => ':',  
+                '；' => ';',  
+                '【' => '[',  
+                '】' => ']',  
+                '「' => '[',  
+                '」' => ']',  
+                '『' => '[',  
+                '』' => ']',  
+                '《' => '<',  
+                '》' => '>',  
+                '（' => '(',  
+                '）' => ')',  
+                '～' => '~',  
+                '〜' => '~',  
+                '—' => '-',   
+                '–' => '-',   
+                '·' => '.',   
                 '“' => '"',
                 '”' => '"',
                 '‘' => '\'',
                 '’' => '\'',
-
-                // 全角空格 (NFKC 通常处理 U+3000，但显式处理无害)
                 (char)12288 => ' ', 
-
-                // 默认保留原字符，交给后续 NFKC 处理
                 _ => c 
             };
 
             sb.Append(mappedChar);
         }
 
-        // --- 阶段 2: Unicode 标准化 (NFKC) ---
-        // 处理全角字母 (Ａ->A), 全角数字 (１->1), 罗马数字 (Ⅳ->IV) 等成百上千种情况
         string preProcessed = sb.ToString();
         return preProcessed.Normalize(System.Text.NormalizationForm.FormKC);
     }
