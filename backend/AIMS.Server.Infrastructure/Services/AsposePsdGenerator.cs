@@ -171,7 +171,7 @@ public class AsposePsdGenerator : IPsdGenerator
     }
 
     // ====================================================================================
-    // ⬇️ 核心条码处理 (v7.0 - 右下角对齐 + 保持缩小 + 防止位置跳动)
+    // ⬇️ 核心条码处理 (v7.4 - 修正旋转判断逻辑: 高度 > 2倍宽度 才旋转)
     // ====================================================================================
 
     private void EmbedBarcodePdfAsSmartObject(string targetPsdPath, string pdfPath, PackagingDimensions dim)
@@ -194,7 +194,7 @@ public class AsposePsdGenerator : IPsdGenerator
                 float targetDpiX = (float)targetImage.HorizontalResolution;
                 float targetDpiY = (float)targetImage.VerticalResolution;
 
-                // 2. 计算布局 (包括新的右下角对齐逻辑)
+                // 2. 计算布局 (判定旋转 + 4cm定宽)
                 var layout = CalculateBarcodeLayout(dim, originalWidthPt, originalHeightPt, targetDpiX, targetDpiY);
 
                 // 3. 将 PDF 渲染为图像
@@ -213,20 +213,19 @@ public class AsposePsdGenerator : IPsdGenerator
                 // 4. 加载为 PSD RasterImage
                 using (var loadedImage = (RasterImage)Aspose.PSD.Image.Load(pageImageStream))
                 {
-                    // 4.1 应用旋转
+                    // 4.1 根据判定结果应用旋转
                     if (layout.Rotate90)
                     {
                         loadedImage.RotateFlip(RotateFlipType.Rotate90FlipNone);
                     }
 
                     // 4.2 调整大小 (Resizing)
-                    // 确保放入图层的像素尺寸与计算一致
                     if (loadedImage.Width != layout.Width || loadedImage.Height != layout.Height)
                     {
                         loadedImage.Resize(layout.Width, layout.Height, ResizeType.LanczosResample);
                     }
 
-                    // 5. 直接创建图层并写入像素 (防止 Ctrl+T 跳动)
+                    // 5. 直接创建图层并写入像素
                     var barcodeLayer = targetImage.AddRegularLayer();
                     barcodeLayer.DisplayName = "BARCODE_TEMP"; 
                     
@@ -235,7 +234,6 @@ public class AsposePsdGenerator : IPsdGenerator
                     barcodeLayer.Right = layout.Position.X + layout.Width;
                     barcodeLayer.Bottom = layout.Position.Y + layout.Height;
 
-                    // 必须使用 LoadArgb32Pixels 保持透明度
                     var pixels = loadedImage.LoadArgb32Pixels(loadedImage.Bounds);
                     barcodeLayer.SaveArgb32Pixels(new Rectangle(0, 0, layout.Width, layout.Height), pixels);
 
@@ -243,7 +241,6 @@ public class AsposePsdGenerator : IPsdGenerator
                     var smartLayer = targetImage.SmartObjectProvider.ConvertToSmartObject(new[] { barcodeLayer });
                     
                     smartLayer.DisplayName = "BARCODE"; 
-                    // 再次确认位置
                     smartLayer.Left = layout.Position.X;
                     smartLayer.Top = layout.Position.Y;
                 }
@@ -267,48 +264,52 @@ public class AsposePsdGenerator : IPsdGenerator
     {
         var layout = new BarcodeLayout();
 
-        // 1. 强制旋转 90 度
-        layout.Rotate90 = true;
+        // -------------------------------------------------------------
+        // 第一步：判定是否为“细长型” (Slender)
+        // 修正逻辑：
+        // 1. 如果是 6x6 (扁盒子/正方体)，Ratio = 1。如果不希望旋转，Ratio 必须 < 阈值。
+        // 2. 如果是细高盒子 (如牙膏盒)，Height >> Width，Ratio 很大。
+        // 因此：当 高度 / 宽度 > 2.0 时，才判定为细长型并旋转。
+        // -------------------------------------------------------------
+        double ratio = (double)dim.Height / dim.Width;
+        layout.Rotate90 = ratio > 2.0; 
 
-        // 2. 获取 PDF 原始像素尺寸
+        // -------------------------------------------------------------
+        // 第二步：设定条码的目标宽度为 4cm
+        // -------------------------------------------------------------
+        int desiredWidthPx = CmToPixels(4.0); // 4cm 对应的像素值
+
+        // 获取 PDF 原始像素尺寸
         double rawPxW = (origW_Pt * dpiX) / 72.0;
         double rawPxH = (origH_Pt * dpiY) / 72.0;
 
-        // 3. 动态计算缩放比例
-        int panelWidthPx = CmToPixels(dim.Width);
-        int safeMarginTotalPx = CmToPixels(1.2); 
-        int targetWidthPx = panelWidthPx - safeMarginTotalPx;
+        // 计算缩放比例：无论是否旋转，我们都希望条码的“长边”（阅读方向的宽度）是 4cm
+        double scale = (double)desiredWidthPx / rawPxW;
 
-        // [保持缩放] 缩放比例为 0.25 (缩小1倍后的效果)
-        double scale = ((double)targetWidthPx / rawPxH) * 0.25; 
+        // 计算出【未旋转】时的目标尺寸
+        int scaledW = desiredWidthPx;                // 4cm
+        int scaledH = (int)Math.Round(rawPxH * scale); // 对应高度
 
-        // 4. 计算最终尺寸
-        double finalW_Raw = rawPxW * scale;
-        double finalH_Raw = rawPxH * scale;
-
+        // -------------------------------------------------------------
+        // 第三步：根据旋转状态，分配最终的图层宽高
+        // -------------------------------------------------------------
         if (layout.Rotate90)
         {
-            layout.Width = (int)Math.Round(finalH_Raw);  
-            layout.Height = (int)Math.Round(finalW_Raw); 
+            // 旋转后：宽变高，高变宽
+            // 此时视觉上的宽度是 scaledH，视觉上的高度是 scaledW (4cm)
+            layout.Width = scaledH;       
+            layout.Height = scaledW;      
         }
         else
         {
-            layout.Width = (int)Math.Round(finalW_Raw);
-            layout.Height = (int)Math.Round(finalH_Raw);
+            // 不旋转：保持原样
+            layout.Width = scaledW;       // 视觉上的宽度是 4cm
+            layout.Height = scaledH;
         }
 
-        // 5. 纵向安全检查
-        int panelHeightPx = CmToPixels(dim.Height);
-        int maxAllowedHeight = panelHeightPx - CmToPixels(2.0);
-
-        if (layout.Height > maxAllowedHeight) 
-        {
-            double shrinkScale = (double)maxAllowedHeight / layout.Height;
-            layout.Width = (int)(layout.Width * shrinkScale);
-            layout.Height = (int)(layout.Height * shrinkScale);
-        }
-
-        // 6. 定位逻辑 (修改为：右侧面面板的 右下角对齐)
+        // -------------------------------------------------------------
+        // 第四步：定位逻辑 (右下角对齐)
+        // -------------------------------------------------------------
         var X_px = CmToPixels(dim.Length);
         var Y_px = CmToPixels(dim.Height);
         var Z_px = CmToPixels(dim.Width);
@@ -319,16 +320,13 @@ public class AsposePsdGenerator : IPsdGenerator
         int panelStartY = B_px + Z_px;              
         int panelEndY = panelStartY + Y_px;         
 
-        // [修改 X轴] 右对齐逻辑
-        // 面板结束X = StartX + 面板宽(Z)
-        // 目标X = 面板结束X - 右边距 - 条码宽
-        int sideMarginPx = CmToPixels(0.5); // 右侧留白 0.5cm (贴近折痕但有空隙)
+        // [X轴] 右对齐
+        int sideMarginPx = CmToPixels(0.5); 
         int panelEndX = panelStartX + Z_px;
         int destX = panelEndX - sideMarginPx - layout.Width;
 
-        // [修改 Y轴] 底部对齐 (下沉)
-        // 之前是留白 1.2cm，现在为了对应红色框位置，减少留白让它更靠下
-        int bottomMarginPx = CmToPixels(0.8); // 底部留白 0.8cm (让它沉到底部)
+        // [Y轴] 底部对齐
+        int bottomMarginPx = CmToPixels(0.8); 
         int destY = panelEndY - bottomMarginPx - layout.Height;
 
         layout.Position = new Point(destX, destY);
