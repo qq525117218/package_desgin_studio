@@ -107,7 +107,7 @@ public class AsposePsdGenerator : IPsdGenerator
             // --- 阶段 3: 处理条形码 ---
             if (assets.Images?.Barcode != null && !string.IsNullOrEmpty(assets.Images.Barcode.Url))
             {
-                onProgress?.Invoke(72, "正在下载条形码...");
+                onProgress?.Invoke(82, "正在下载条形码...");
                 
                 var pdfBytes = await _httpClient.GetByteArrayAsync(assets.Images.Barcode.Url);
                 if (pdfBytes.Length > 0)
@@ -115,7 +115,7 @@ public class AsposePsdGenerator : IPsdGenerator
                     tempPdfPath = Path.GetTempFileName();
                     await File.WriteAllBytesAsync(tempPdfPath, pdfBytes);
 
-                    onProgress?.Invoke(75, "正在处理条形码智能对象...");
+                    onProgress?.Invoke(85, "正在处理条形码智能对象...");
                     // 调用核心处理方法
                     EmbedBarcodePdfAsSmartObject(tempPsdPath, tempPdfPath, dim);
                 }
@@ -130,7 +130,7 @@ public class AsposePsdGenerator : IPsdGenerator
 
                 if (File.Exists(logoPath))
                 {
-                    onProgress?.Invoke(78, $"正在置入品牌 Logo: {safeBrandName}...");
+                    onProgress?.Invoke(88, $"正在置入品牌 Logo: {safeBrandName}...");
                     EmbedLogoAsSmartObject(tempPsdPath, logoPath, dim);
                 }
                 else
@@ -142,7 +142,7 @@ public class AsposePsdGenerator : IPsdGenerator
             // --- 阶段 4: 处理固定图标 ---
             if (File.Exists(fixedIconPath))
             {
-                onProgress?.Invoke(82, "正在置入固定图标...");
+                onProgress?.Invoke(95, "正在置入固定图标...");
                 EmbedFixedAssetAsSmartObject(tempPsdPath, fixedIconPath, dim);
             }
             else
@@ -151,7 +151,7 @@ public class AsposePsdGenerator : IPsdGenerator
             }
 
             // --- 阶段 5: 读取最终文件并返回 ---
-            onProgress?.Invoke(90, "生成完成，准备输出...");
+            onProgress?.Invoke(99, "生成完成，准备输出...");
             
             if (!File.Exists(tempPsdPath))
                 throw new FileNotFoundException("生成过程中文件丢失", tempPsdPath);
@@ -393,9 +393,7 @@ public class AsposePsdGenerator : IPsdGenerator
 
             var resolution = new ResolutionSetting(targetDpiX, targetDpiY);
             smartLayer.ReplaceContents(srcPsd, resolution);
-
-            smartLayer.Left = destLeft;
-            smartLayer.Top = destTop;
+            
 
             var saveOptions = new PsdOptions
             {
@@ -461,9 +459,6 @@ public class AsposePsdGenerator : IPsdGenerator
             var resolution = new ResolutionSetting(targetDpiX, targetDpiY);
             smartLayer.ReplaceContents(srcPsd, resolution);
 
-            smartLayer.Left = destLeft;
-            smartLayer.Top = destTop;
-
             var saveOptions = new PsdOptions
             {
                 CompressionMethod = CompressionMethod.RLE,
@@ -487,7 +482,7 @@ public class AsposePsdGenerator : IPsdGenerator
         int panelLeft = A + Z;
         
         int centerX = panelLeft + (X / 2);
-        int destX = centerX - (widthPx / 2) + 300;
+        int destX = centerX - (widthPx / 2) ;
 
         int topFoldY = B + Z;
         int marginTop = (int)(Y * 0.12);
@@ -507,12 +502,12 @@ public class AsposePsdGenerator : IPsdGenerator
         int panelLeft = A + (2 * Z) + X;
 
         int centerX = panelLeft + (X / 2);
-        int destX = centerX - (widthPx / 2) + 300;
+        int destX = centerX - (widthPx / 2) ;
 
         int bottomFoldY = B + Z + Y;
         int iconBottomMargin = (int)(Y * 0.28); 
         
-        int destY = bottomFoldY - iconBottomMargin - heightPx + 300;
+        int destY = bottomFoldY - iconBottomMargin - heightPx ;
 
         return new Point(destX, destY);
     }
