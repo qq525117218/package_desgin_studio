@@ -478,7 +478,7 @@ public class AsposePsdGenerator : IPsdGenerator
             }
             CreateRichTextLayer(psdImage, "SHELF_LIFE_TXT", "SHELF LIFE:", info.ShelfLife, new Rectangle(backStartX + padding, currentY, textAreaWidth, 50), fontSize);
             currentY += 60;
-            CreateRichTextLayer(psdImage, "MADE_IN _TXT", "MADE IN:", info.Origin, new Rectangle(backStartX + padding, currentY, textAreaWidth, 50), fontSize);
+            CreateRichTextLayer(psdImage, "MADE_IN _TXT", "MADE IN:", info.Origin, new Rectangle(backStartX + padding, currentY, textAreaWidth, 50), fontSize,true);
             currentY += 60;
             if (main != null && !string.IsNullOrWhiteSpace(main.CapacityInfoBack))
                 CreateRichTextLayer(psdImage, "NET_BACK_TXT", "", main.CapacityInfoBack, new Rectangle(backStartX + padding, currentY, textAreaWidth, 60), 6f, true);
