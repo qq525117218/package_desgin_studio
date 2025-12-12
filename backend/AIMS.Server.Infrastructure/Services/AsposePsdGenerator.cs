@@ -37,6 +37,44 @@ public class AsposePsdGenerator : IPsdGenerator
 
     private static readonly HttpClient _httpClient = new HttpClient();
     
+    static AsposePsdGenerator()
+    {
+        try
+        {
+            var fontFolders = new List<string>();
+
+            // 1. 添加自定义字体目录
+            string customFontsDir = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "Assets", "Fonts");
+            if (Directory.Exists(customFontsDir))
+            {
+                fontFolders.Add(customFontsDir);
+            }
+
+            // 2. Windows 系统字体
+            if (System.Runtime.InteropServices.RuntimeInformation.IsOSPlatform(System.Runtime.InteropServices.OSPlatform.Windows))
+            {
+                fontFolders.Add(@"C:\Windows\Fonts"); 
+            }
+            else
+            {
+                // Linux 字体
+                fontFolders.Add("/usr/share/fonts");
+                fontFolders.Add("/usr/local/share/fonts");
+            }
+
+            // 3. 应用字体设置
+            if (fontFolders.Count > 0)
+            {
+                FontSettings.SetFontsFolders(fontFolders.ToArray(), true);
+                Console.WriteLine($"[AsposePsdGenerator] 已重置字体目录: {string.Join(", ", fontFolders)}");
+            }
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine($"[AsposePsdGenerator] 字体配置警告: {ex.Message}");
+        }
+    }
+    
     // 内部结构用于传递计算后的布局信息
     private struct BarcodeLayout
     {
@@ -768,6 +806,7 @@ public class AsposePsdGenerator : IPsdGenerator
             var textData = textLayer.TextData;
             float fontSizePixels = PtToPixels(fontSizePt);
             string fontName = FontSettings.GetAdobeFontName("Arial") ?? "Arial";
+            Console.WriteLine($"[AsposePsdGenerator] 生成psd文件选择的字体: {fontName}");
 
             if (textData.Items.Length > 0)
             {
