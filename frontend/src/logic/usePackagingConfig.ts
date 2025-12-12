@@ -9,36 +9,40 @@ const OSS_BASE_URL = 'https://oss-pro.plm.westmonth.cn'
 // 1. 基础数据结构
 export interface Dimensions { length: number; width: number; height: number; bleedX: number; bleedY: number; bleedInner: number; }
 
-// Content 接口：对应 Step 3 文档解析的数据 (通常是实际生产工厂信息)
 export interface Content {
     productName: string;
     ingredients: string;
     warnings: string;
-    manufacturer: string; // 实际生产商 (Factory)
+    manufacturer: string;
     origin: string;
     shelfLife: string;
-    address: string;      // 实际生产地址 (Factory Address)
+    address: string;
     directions: string;
-    benefits: string;     // [新增] 产品功效
+    benefits: string;
 }
 
-// Marketing 接口：对应 Step 2 产品定义的数据 (通常是品牌方/经销商信息)
 export interface Marketing {
     sku: string;
     brand: string;
-    capacityValue: string;     // 正面规格
-    capacityValueBack: string; // 背面规格
+    capacityValue: string;
+    capacityValueBack: string;
     capacityUnit: string;
     sellingPoints: string[];
-    // [New] 新增独立字段，与 Content 解耦
-    manufacturer: string; // 品牌商/经销商 (Distributor/Brand Owner)
-    address: string;      // 品牌商地址 (Distributor Address)
+    manufacturer: string;
+    address: string;
+}
+
+// AI设计相关接口
+export interface AIDesign {
+    benchmarkImage: string; // 对标产品图片 (main_pic)
+    designType: string;     // 设计类型: 'logo', 'similar', 'reference', 'auto'
 }
 
 export interface WorkflowData {
     dimensions: Dimensions;
     content: Content;
     marketing: Marketing;
+    aiDesign: AIDesign;
 }
 
 // 2. 文档解析响应接口
@@ -55,7 +59,7 @@ interface ParseDocResponse {
             shelf_life: string
             address: string
             directions: string
-            benefits: string // [新增]
+            benefits: string
             ingredients: {
                 active_ingredients: string
                 inactive_ingredients: string
@@ -112,6 +116,22 @@ interface BarcodeResponse {
     }
 }
 
+// 产品详情接口
+interface ProductInfoResponse {
+    code: number
+    is_success: boolean
+    message: string
+    data: {
+        url: string
+        main_pic: string
+        product_name: string
+        brand_name: string
+        brand_code: string
+        platform_name: string
+        status: any
+    }
+}
+
 // 5. 任务与进度接口
 interface PsdTaskStatus {
     task_id: string
@@ -135,7 +155,6 @@ interface ProgressResponse {
 }
 
 // --- 主要逻辑 Hook ---
-// [修改] 接收 onUnauthorized 回调参数
 export function usePackagingConfig(onUnauthorized: () => void) {
     const activeStep = ref(0)
     const formRef = ref<FormInstance>()
@@ -145,6 +164,7 @@ export function usePackagingConfig(onUnauthorized: () => void) {
 
     // --- 状态管理 ---
     const isGenerating = ref(false)
+    const isPreviewLoading = ref(false) // [新增] 效果图生成Loading状态
     const progressPercentage = ref(0)
     const progressStatus = ref('')
     const progressMessage = ref('准备提交任务...')
@@ -161,7 +181,7 @@ export function usePackagingConfig(onUnauthorized: () => void) {
         content: {
             productName: '', ingredients: '', warnings: '', manufacturer: '',
             origin: '', shelfLife: '', address: '', directions: '',
-            benefits: '' // [新增] 初始化
+            benefits: ''
         },
         marketing: {
             sku: '',
@@ -175,9 +195,12 @@ export function usePackagingConfig(onUnauthorized: () => void) {
                 'Versatile for multiple surfaces.',
                 'Safe reef-friendly ingredients.'
             ],
-            // [New] 初始化新增字段
             manufacturer: '',
             address: ''
+        },
+        aiDesign: {
+            benchmarkImage: '',
+            designType: 'similar'
         }
     })
 
@@ -195,47 +218,24 @@ export function usePackagingConfig(onUnauthorized: () => void) {
         'marketing.capacityValueBack': [{ required: true, message: '请输入背面规格', trigger: 'blur' }]
     })
 
-    // [新增] 鉴权 Fetch 封装
     const authFetch = async (url: string, options: RequestInit = {}) => {
         const token = localStorage.getItem('token')
-
-        // 1. 本地无 Token，直接退出
-        if (!token) {
-            console.warn('No Access Token found locally.')
-            onUnauthorized()
-            throw new Error('No Access Token')
-        }
-
-        const headers = {
-            'Content-Type': 'application/json',
-            'Authorization': `Bearer ${token}`,
-            ...(options.headers || {})
-        }
-
+        if (!token) { console.warn('No Access Token'); onUnauthorized(); throw new Error('No Access Token') }
+        const headers = { 'Content-Type': 'application/json', 'Authorization': `Bearer ${token}`, ...(options.headers || {}) }
         try {
             const response = await fetch(url, { ...options, headers })
-
-            // 2. 拦截 401 Unauthorized
-            if (response.status === 401) {
-                console.warn('Received 401 Unauthorized from server.')
-                onUnauthorized() // 触发登出
-                throw new Error('Unauthorized') // 中断后续代码
-            }
-
+            if (response.status === 401) { console.warn('401 Unauthorized'); onUnauthorized(); throw new Error('Unauthorized') }
             return response
-        } catch (error) {
-            throw error
-        }
+        } catch (error) { throw error }
     }
 
-    // 步骤验证配置
     const stepValidationConfig: Record<number, string[]> = {
         0: ['dimensions.length', 'dimensions.width', 'dimensions.height'],
         1: ['marketing.sku', 'marketing.brand', 'marketing.capacityValue', 'marketing.capacityValueBack'],
-        2: ['content.productName']
+        2: ['content.productName'],
+        3: []
     }
 
-    // --- 流程控制 ---
     const nextStep = async () => {
         if (!formRef.value) return;
         if (activeStep.value === 2 && !isDocParsed.value) { ElMessage.warning('请上传文档'); return; }
@@ -258,7 +258,6 @@ export function usePackagingConfig(onUnauthorized: () => void) {
         barcodeUrl.value = ''
     }
 
-    // --- 文件处理 ---
     const fileToBase64 = (file: File): Promise<string> => {
         return new Promise((resolve, reject) => {
             const reader = new FileReader()
@@ -278,7 +277,6 @@ export function usePackagingConfig(onUnauthorized: () => void) {
         const loadingInstance = ElLoading.service({ text: 'AI 解析中...', background: 'rgba(255,255,255,0.8)' })
         try {
             const base64String = await fileToBase64(file.raw)
-            // [修改] 使用 authFetch
             const response = await authFetch('/api/document/parse/word', {
                 method: 'POST',
                 body: JSON.stringify({ file_name: file.name, file_content_base64: base64String })
@@ -295,7 +293,7 @@ export function usePackagingConfig(onUnauthorized: () => void) {
                     shelfLife: parsed.shelf_life || '',
                     address: parsed.address || '',
                     directions: parsed.directions || '',
-                    benefits: parsed.benefits || '', // [新增] 映射解析结果
+                    benefits: parsed.benefits || '',
                     ingredients: parsed.ingredients?.raw_text || (parsed.ingredients?.active_ingredients ? `Active: ${parsed.ingredients.active_ingredients}\n` : '') + (parsed.ingredients?.inactive_ingredients ? `Inactive: ${parsed.ingredients.inactive_ingredients}` : '')
                 })
                 fileName.value = file.name
@@ -303,98 +301,74 @@ export function usePackagingConfig(onUnauthorized: () => void) {
                 ElMessage.success('解析成功')
             } else { throw new Error('解析失败') }
         } catch (error: any) {
-            // [修改] 忽略 Unauthorized 错误，避免重复提示
-            if (error.message !== 'Unauthorized') {
-                ElMessage.error(error.message || '解析异常')
-            }
+            if (error.message !== 'Unauthorized') ElMessage.error(error.message || '解析异常')
             isDocParsed.value = false
         } finally { loadingInstance.close() }
     }
 
-    // --- 标签处理 ---
-    const handleCloseTag = (tag: string) => {
-        formData.marketing.sellingPoints.splice(formData.marketing.sellingPoints.indexOf(tag), 1)
-    }
-    const handleInputConfirm = () => {
-        if (inputValue.value) {
-            formData.marketing.sellingPoints.push(inputValue.value); inputValue.value = ''
-        }
-    }
-    const addQuickTag = (tag: string) => {
-        if (!formData.marketing.sellingPoints.includes(tag)) formData.marketing.sellingPoints.push(tag)
-    }
+    const handleCloseTag = (tag: string) => { formData.marketing.sellingPoints.splice(formData.marketing.sellingPoints.indexOf(tag), 1) }
+    const handleInputConfirm = () => { if (inputValue.value) { formData.marketing.sellingPoints.push(inputValue.value); inputValue.value = '' } }
+    const addQuickTag = (tag: string) => { if (!formData.marketing.sellingPoints.includes(tag)) formData.marketing.sellingPoints.push(tag) }
 
-    // --- 品牌切换处理 ---
     const handleBrandChange = async (brandName: string) => {
         if (!brandName) return
         const brand = brandOptions.value.find(b => b.name === brandName)
         if (!brand || !brand.code) return
-
         const loading = ElLoading.service({ text: '正在获取品牌制造商信息...', background: 'rgba(255,255,255,0.6)' })
         try {
-            // [修改] 使用 authFetch
-            const response = await authFetch('/api/plm/brand/detail', {
-                method: 'POST',
-                body: JSON.stringify({ code: brand.code })
-            })
+            const response = await authFetch('/api/plm/brand/detail', { method: 'POST', body: JSON.stringify({ code: brand.code }) })
             const resData = await response.json() as BrandDetailResponse
-
             if (resData.is_success && resData.data?.default_manufacturer) {
                 formData.marketing.manufacturer = resData.data.default_manufacturer.manufacturer_english_name || ''
                 formData.marketing.address = resData.data.default_manufacturer.manufacturer_english_address || ''
                 ElMessage.success('已更新品牌方信息')
             }
-        } catch (error) {
-            console.error('Fetch brand detail failed', error)
-            // 静默失败或提示
-        } finally {
-            loading.close()
-        }
+        } catch (error) { console.error('Fetch brand detail failed', error) } finally { loading.close() }
     }
 
-    // --- 条码获取 ---
     const handleFetchBarcode = async () => {
         const skuCode = formData.marketing.sku
         if (!skuCode) return
-
         barcodeUrl.value = ''
+        formData.aiDesign.benchmarkImage = ''
         isFetchingBarcode.value = true
-
         try {
-            // [修改] 使用 authFetch
-            const response = await authFetch('/api/plm/product/barcode', {
-                method: 'POST',
-                body: JSON.stringify({ code: skuCode })
-            })
+            const barcodePromise = authFetch('/api/plm/product/barcode', { method: 'POST', body: JSON.stringify({ code: skuCode }) }).then(res => res.json() as Promise<any>);
+            const infoPromise = authFetch('/api/plm/demand/product/info', { method: 'POST', body: JSON.stringify({ code: skuCode }) }).then(res => res.json() as Promise<ProductInfoResponse>);
+            const [barcodeRes, infoRes] = await Promise.all([barcodePromise, infoPromise])
 
-            const resData = (await response.json()) as BarcodeResponse
-
-            if (response.ok && resData.is_success && resData.data?.bar_code_path) {
-                const path = resData.data.bar_code_path
-                const fullUrl = path.startsWith('http') ? path : `${OSS_BASE_URL}${path}`
-                barcodeUrl.value = fullUrl
-            } else {
-                console.warn('Barcode not found or API error', resData.message)
+            if (barcodeRes.is_success && barcodeRes.data?.bar_code_path) {
+                const path = barcodeRes.data.bar_code_path
+                barcodeUrl.value = path.startsWith('http') ? path : `${OSS_BASE_URL}${path}`
             }
-
-        } catch (error) {
-            console.error('Failed to fetch barcode', error)
-        } finally {
-            isFetchingBarcode.value = false
-        }
+            if (infoRes.is_success && infoRes.data?.main_pic) {
+                formData.aiDesign.benchmarkImage = infoRes.data.main_pic
+                ElMessage.success('已自动获取对标产品图')
+            }
+        } catch (error) { console.error('Failed to fetch product info or barcode', error) } finally { isFetchingBarcode.value = false }
     }
 
-    // --- PSD 生成 ---
+    // [新增] 处理生成效果图
+    const handleGeneratePreview = () => {
+        if (!formData.aiDesign.benchmarkImage) {
+            ElMessage.warning('请先输入 SKU 获取对标产品图片')
+            return
+        }
+        isPreviewLoading.value = true
+        // 模拟请求
+        setTimeout(() => {
+            isPreviewLoading.value = false
+            ElMessage.success('AI 效果图生成指令已发送')
+        }, 2000)
+    }
+
     const handleGeneratePSD = async () => {
         isGenerating.value = true
         progressPercentage.value = 0
         progressStatus.value = ''
         progressMessage.value = '正在提交生成任务...'
-
         try {
             const username = localStorage.getItem('username') || 'User'
-
-            // --- 构建 Payload ---
             const payload = {
                 project_name: `${formData.marketing.brand}_${formData.marketing.sku}`.replace(/\s+/g, '_'),
                 user_context: { username: username, generate_dieline: true },
@@ -425,32 +399,18 @@ export function usePackagingConfig(onUnauthorized: () => void) {
                         }
                     },
                     dynamic_images: {
-                        barcode: {
-                            value: formData.marketing.sku,
-                            type: 'EAN-13',
-                            url: barcodeUrl.value
-                        }
+                        barcode: { value: formData.marketing.sku, type: 'EAN-13', url: barcodeUrl.value }
                     }
                 }
             }
-
-            // [修改] 使用 authFetch
-            const submitRes = await authFetch('/api/design/generate/psd/async', {
-                method: 'POST',
-                body: JSON.stringify(payload)
-            })
-
+            const submitRes = await authFetch('/api/design/generate/psd/async', { method: 'POST', body: JSON.stringify(payload) })
             if (!submitRes.ok) throw new Error(`提交失败: ${submitRes.status}`)
             const submitData = (await submitRes.json()) as AsyncSubmitResponse
             if (!submitData.is_success) throw new Error(submitData.message)
-
             const taskId = submitData.data
             currentTaskId.value = taskId
-
             await pollProgress(taskId, payload.project_name)
-
         } catch (error: any) {
-            // [修改] 忽略 Unauthorized
             if (error.message !== 'Unauthorized') {
                 console.error('Task Failed:', error)
                 progressStatus.value = 'exception'
@@ -465,68 +425,37 @@ export function usePackagingConfig(onUnauthorized: () => void) {
         return new Promise<void>((resolve, reject) => {
             const timer = setInterval(async () => {
                 try {
-                    // [修改] 使用 authFetch
                     const QX = await authFetch(`/api/design/progress/${taskId}`)
-
                     if (!QX.ok) throw new Error('无法获取任务进度')
                     const resData = (await QX.json()) as ProgressResponse
                     const task = resData.data
-
                     progressPercentage.value = task.progress
                     progressMessage.value = task.message || '正在处理...'
-
                     if (task.status === 'Completed') {
                         clearInterval(timer)
                         progressStatus.value = 'success'
                         progressMessage.value = '生成完成，即将下载...'
-
-                        const downloadUrl = task.download_url
-                            ? task.download_url
-                            : `/api/design/download/${taskId}?fileName=${defaultName}.psd`
-
+                        const downloadUrl = task.download_url ? task.download_url : `/api/design/download/${taskId}?fileName=${defaultName}.psd`
                         currentDownloadUrl.value = downloadUrl
-
                         try {
                             const urlObj = new URL(downloadUrl, window.location.origin)
                             const finalFileName = urlObj.searchParams.get('fileName')
                             generatedFileName.value = finalFileName ? decodeURIComponent(finalFileName) : `${defaultName}.psd`
-                        } catch (e) {
-                            generatedFileName.value = `${defaultName}.psd`
-                        }
-
+                        } catch (e) { generatedFileName.value = `${defaultName}.psd` }
                         await triggerDownload(downloadUrl)
-
-                        setTimeout(() => {
-                            isGenerating.value = false
-                            activeStep.value = 4
-                            resolve()
-                        }, 1000)
-                    }
-                    else if (task.status === 'Failed') {
-                        clearInterval(timer)
-                        throw new Error(task.message || '生成失败')
-                    }
-                } catch (err) {
-                    clearInterval(timer)
-                    reject(err)
-                }
+                        setTimeout(() => { isGenerating.value = false; activeStep.value = 5; resolve() }, 1000)
+                    } else if (task.status === 'Failed') { clearInterval(timer); throw new Error(task.message || '生成失败') }
+                } catch (err) { clearInterval(timer); reject(err) }
             }, 1000)
         })
     }
 
     const triggerDownload = (url: string) => {
-        const link = document.createElement('a')
-        link.href = url
-        link.setAttribute('download', '')
-        document.body.appendChild(link)
-        link.click()
-        document.body.removeChild(link)
-        ElMessage.success('下载已开始，请留意浏览器下载任务')
+        const link = document.createElement('a'); link.href = url; link.setAttribute('download', ''); document.body.appendChild(link); link.click(); document.body.removeChild(link); ElMessage.success('下载已开始')
     }
 
     const fetchBrandList = async () => {
         try {
-            // [修改] 使用 authFetch
             const response = await authFetch('/api/plm/brand/list')
             const resData = await response.json() as BrandListResponse
             if (resData.is_success) brandOptions.value = resData.data.plm_brand_data
@@ -536,10 +465,8 @@ export function usePackagingConfig(onUnauthorized: () => void) {
 
     return {
         activeStep, formRef, formData, rules, isDocParsed, fileName, inputValue, brandOptions,
-        isGenerating, progressPercentage, progressStatus, progressMessage, currentDownloadUrl, generatedFileName,
+        isGenerating, isPreviewLoading, progressPercentage, progressStatus, progressMessage, currentDownloadUrl, generatedFileName,
         isFetchingBarcode, barcodeUrl,
-        nextStep, prevStep, resetWorkflow, handleFileUpload, handleCloseTag, handleInputConfirm, addQuickTag, handleGeneratePSD, triggerDownload,
-        handleBrandChange,
-        handleFetchBarcode
+        nextStep, prevStep, resetWorkflow, handleFileUpload, handleCloseTag, handleInputConfirm, addQuickTag, handleGeneratePSD, triggerDownload, handleBrandChange, handleFetchBarcode, handleGeneratePreview
     }
 }
