@@ -310,7 +310,7 @@ public class AsposePsdGenerator : IPsdGenerator
         // 因此：当 高度 / 宽度 > 2.0 时，才判定为细长型并旋转。
         // -------------------------------------------------------------
         double ratio = (double)dim.Height / dim.Width;
-        layout.Rotate90 = ratio > 2.0; 
+        layout.Rotate90 = ratio >= 2.0; 
 
         // -------------------------------------------------------------
         // 第二步：设定条码的目标宽度为 4cm
