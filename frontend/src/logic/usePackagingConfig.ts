@@ -329,23 +329,54 @@ export function usePackagingConfig(onUnauthorized: () => void) {
     const handleFetchBarcode = async () => {
         const skuCode = formData.marketing.sku
         if (!skuCode) return
+
+        // 重置状态
         barcodeUrl.value = ''
         formData.aiDesign.benchmarkImage = ''
         isFetchingBarcode.value = true
-        try {
-            const barcodePromise = authFetch('/api/plm/product/barcode', { method: 'POST', body: JSON.stringify({ code: skuCode }) }).then(res => res.json() as Promise<any>);
-            const infoPromise = authFetch('/api/plm/demand/product/info', { method: 'POST', body: JSON.stringify({ code: skuCode }) }).then(res => res.json() as Promise<ProductInfoResponse>);
-            const [barcodeRes, infoRes] = await Promise.all([barcodePromise, infoPromise])
 
-            if (barcodeRes.is_success && barcodeRes.data?.bar_code_path) {
-                const path = barcodeRes.data.bar_code_path
-                barcodeUrl.value = path.startsWith('http') ? path : `${OSS_BASE_URL}${path}`
-            }
-            if (infoRes.is_success && infoRes.data?.main_pic) {
-                formData.aiDesign.benchmarkImage = infoRes.data.main_pic
-                ElMessage.success('已自动获取对标产品图')
-            }
-        } catch (error) { console.error('Failed to fetch product info or barcode', error) } finally { isFetchingBarcode.value = false }
+        try {
+            // 1. 定义条码请求 (独立 catch 错误，防止影响主流程)
+            const barcodePromise = authFetch('/api/plm/product/barcode', {
+                method: 'POST',
+                body: JSON.stringify({ code: skuCode })
+            })
+                .then(res => res.json())
+                .then((res: any) => {
+                    if (res.is_success && res.data?.bar_code_path) {
+                        const path = res.data.bar_code_path
+                        // 拼接完整 URL
+                        barcodeUrl.value = path.startsWith('http') ? path : `${OSS_BASE_URL}${path}`
+                    }
+                })
+                .catch(err => {
+                    console.warn('Barcode fetch failed:', err)
+                })
+
+            // 2. 定义详情图请求 (独立 catch 错误)
+            const infoPromise = authFetch('/api/plm/demand/product/info', {
+                method: 'POST',
+                body: JSON.stringify({ code: skuCode })
+            })
+                .then(res => res.json())
+                .then((res: ProductInfoResponse) => {
+                    if (res.is_success && res.data?.main_pic) {
+                        formData.aiDesign.benchmarkImage = res.data.main_pic
+                        ElMessage.success('已自动获取对标产品图')
+                    }
+                })
+                .catch(err => {
+                    console.warn('Product info fetch failed:', err)
+                })
+
+            // 3. 并行执行，等待两者都完成（无论成功失败）
+            await Promise.all([barcodePromise, infoPromise])
+
+        } catch (error) {
+            console.error('Unexpected error in handleFetchBarcode', error)
+        } finally {
+            isFetchingBarcode.value = false
+        }
     }
 
     // [新增] 处理生成效果图
