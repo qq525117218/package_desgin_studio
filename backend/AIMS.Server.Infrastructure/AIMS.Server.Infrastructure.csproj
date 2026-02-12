@@ -52,7 +52,6 @@
   </ItemGroup>
 
   <ItemGroup>
-    <Folder Include="Assets\Fonts\" />
     <Folder Include="Assets\Logo\" />
     <Folder Include="Assets\Templates\" />
   </ItemGroup>

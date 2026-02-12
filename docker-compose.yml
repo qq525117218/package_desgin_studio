@@ -54,8 +54,6 @@ services:
     environment:
       - ASPNETCORE_ENVIRONMENT=Production
       - ASPNETCORE_URLS=http://0.0.0.0:8080
-      # ⚠️ 关键修改：容器内连接数据库必须用服务名 "mysql" 而非 127.0.0.1
-      # 端口使用容器内部端口 3306，而非映射出的 33066
       - MYSQL_CONNECTION_STRING=Server=mysql;Port=3306;Database=${MYSQL_DATABASE};Uid=${MYSQL_USER};Pwd=${MYSQL_PASSWORD};
       - REDIS_HOST=redis
       - REDIS_PORT=6379
