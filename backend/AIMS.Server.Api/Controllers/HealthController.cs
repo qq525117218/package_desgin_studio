@@ -13,10 +13,7 @@ namespace AIMS.Server.Api.Controllers
     {
         private readonly IConnectionMultiplexer _redis;
         
-        // ❌ 删除或注释掉下面这行
-        // private readonly MySqlDbContext _dbContext; 
-
-        // ✅ 修改构造函数：只保留 IConnectionMultiplexer
+        
         public HealthController(IConnectionMultiplexer redis) 
         {
             _redis = redis;

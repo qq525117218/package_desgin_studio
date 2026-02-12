@@ -20,11 +20,7 @@ public static class AsposePreheater
         {
             try
             {
-                // =========================================================
-                // 1. 关键修复：强制触发 AsposePsdGenerator 的静态构造函数
-                // =========================================================
-                // 你的 AsposePsdGenerator 静态构造函数里有 FontSettings.SetFontsFolders
-                // 这是最耗时的操作（扫描字体），必须在启动时强制执行。
+                // 1. 强制触发 AsposePsdGenerator 的静态构造函数
                 System.Runtime.CompilerServices.RuntimeHelpers.RunClassConstructor(typeof(AsposePsdGenerator).TypeHandle);
                 Console.WriteLine("[AsposePreheater] 字体配置与缓存构建完成");
 
@@ -34,7 +30,6 @@ public static class AsposePreheater
                 Console.WriteLine("[AsposePreheater] Aspose.Words 引擎就绪");
 
                 // 3. 预热 Aspose.PSD (图形引擎)
-                // 创建一个小画布并执行一次绘图，确保 libgdiplus / SkiaSharp 等底层库已加载
                 using (var psd = new Aspose.PSD.FileFormats.Psd.PsdImage(10, 10))
                 {
                     var graphics = new Aspose.PSD.Graphics(psd);
@@ -47,9 +42,7 @@ public static class AsposePreheater
             }
             catch (Exception ex)
             {
-                // 预热失败不应阻断服务启动，但需记录日志
                 Console.WriteLine($"[AsposePreheater] ⚠️ 警告: 预热过程中发生错误 (服务仍将启动): {ex.Message}");
-                // 这里不要 throw，否则可能导致容器无限重启
             }
         });
     }

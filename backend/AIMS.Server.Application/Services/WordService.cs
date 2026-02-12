@@ -115,8 +115,7 @@ public class WordService : IWordService
 
         return dto;
     }
-
-    // --- 👇 私有清洗方法 (业务规则封装) ---
+    
 
     /// <summary>
     /// 清洗产品名称：去掉 "PRODUCT NAME:" 及其变体

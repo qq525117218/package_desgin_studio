@@ -5,6 +5,13 @@
 /// </summary>
 public class PackagingAssets
 {
+    /// <summary>
+    /// 包装相关的文案素材信息
+    /// </summary>
     public TextAssets Texts { get; set; } = new();
+
+    /// <summary>
+    /// 包装相关的动态图片素材信息（含条码）
+    /// </summary>
     public DynamicImages Images { get; set; } = new();
 }

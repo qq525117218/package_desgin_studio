@@ -93,10 +93,9 @@ public class AsposeWordParser : IWordParser
                    .Replace(ControlChar.NonBreakingSpace, " ")
                    .Replace("\u00A0", " ");
 
-        // 3. 关键：将 + 替换为空格，彻底解决 JSON 序列化 \u002B 问题
-        // 比如 "品牌+产品名" -> "品牌 产品名"
+        // 3. 将 + 替换为空格，彻底解决 JSON 序列化 \u002B 问题
         text = text.Replace("+", " ");
-
+        
         // 4. 正则合并：将连续的多个空格合并为一个
         text = Regex.Replace(text, @"\s+", " ");
 

@@ -3,12 +3,15 @@ using System.Text.Json.Serialization;
 
 namespace AIMS.Server.Application.DTOs.Plm;
 
+/// <summary>
+/// PLM 编码查询请求传输对象
+/// </summary>
 public class PlmCodeRequestDto
 {
     /// <summary>
-    /// SKU 编码 (例如: SKU00001636)
+    /// 目标查询编码
     /// </summary>
     [Required(ErrorMessage = "SKU Code 不能为空")]
-    [JsonPropertyName("code")] // 确保前端传 code 或 Code 都能接收
+    [JsonPropertyName("code")] 
     public string Code { get; set; } = string.Empty;
 }

@@ -3,10 +3,6 @@ using AIMS.Server.Application.Services;
 using AIMS.Server.Domain.Interfaces;
 using AIMS.Server.Infrastructure.Services;
 using Microsoft.Extensions.DependencyInjection;
-// 引入必要的命名空间
-using Aspose.PSD; 
-// 注意：Aspose.Words 和 Aspose.Pdf 的 License 类名都是 License，
-// 为避免冲突，下面代码中使用全限定名 (Aspose.Words.License)
 
 namespace AIMS.Server.Infrastructure.Extensions;
 
@@ -22,7 +18,7 @@ public static class InfrastructureExtensions
         services.AddScoped<IWordParser, AsposeWordParser>();
         services.AddScoped<IWordService, WordService>();
 
-        // 2. 初始化 License (立即执行)
+        // 2. 初始化 License 
         InitAsposeLicense();
 
         return services;
@@ -35,13 +31,11 @@ public static class InfrastructureExtensions
             var assembly = Assembly.GetExecutingAssembly();
             
             // 资源名称规则：默认命名空间.文件夹名.文件名
-            // 请确保 namespace 和文件夹名字准确
             var resourceName = "AIMS.Server.Infrastructure.Licenses.Aspose.Total.NET.lic";
 
             // 1. 获取 License 资源流
             Stream? resourceStream = assembly.GetManifestResourceStream(resourceName);
-
-            // 如果找不到，尝试模糊搜索
+            
             if (resourceStream == null)
             {
                 var allResources = assembly.GetManifestResourceNames();
@@ -89,7 +83,7 @@ public static class InfrastructureExtensions
                     Console.ResetColor();
                 }
 
-                // --- 初始化 Aspose.Words (解决 Word 文档红色文字问题) ---
+                // --- 初始化 Aspose.Words ---
                 try
                 {
                     ms.Position = 0; // 重置流位置
@@ -104,10 +98,9 @@ public static class InfrastructureExtensions
                     Console.ResetColor();
                 }
 
-                // --- 初始化 Aspose.PDF (解决之前的条形码 PDF 处理问题) ---
+                // --- 初始化 Aspose.PDF ---
                 try
                 {
-                    // 如果项目没引用 Aspose.PDF，请注释掉这一块
                     ms.Position = 0; // 重置流位置
                     var pdfLic = new Aspose.Pdf.License();
                     pdfLic.SetLicense(ms);
@@ -115,7 +108,6 @@ public static class InfrastructureExtensions
                 }
                 catch (Exception ex)
                 {
-                    // 仅显示警告，不影响主程序
                     Console.WriteLine($" [PDF]   License: ⚠️ Skipped or Failed ({ex.Message})");
                 }
                 

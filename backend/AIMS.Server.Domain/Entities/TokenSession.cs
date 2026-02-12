@@ -2,13 +2,39 @@ using System.Text.Json.Serialization;
 
 namespace AIMS.Server.Domain.Entities;
 
+/// <summary>
+/// 令牌会话实体类
+/// </summary>
 public class TokenSession
 {
+    /// <summary>
+    /// 会话唯一标识
+    /// </summary>
     public string SessionId { get; set; } = string.Empty;
+
+    /// <summary>
+    /// 登录用户名
+    /// </summary>
     public string Username { get; set; } = string.Empty;
+
+    /// <summary>
+    /// 用户登录IP地址
+    /// </summary>
     public string UserIp { get; set; } = string.Empty;
+
+    /// <summary>
+    /// 访问令牌
+    /// </summary>
     public string AccessToken { get; set; } = string.Empty;
+
+    /// <summary>
+    /// 登录时间
+    /// </summary>
     public DateTime LoginTime { get; set; }
+
+    /// <summary>
+    /// 令牌过期时间
+    /// </summary>
     public DateTime ExpireTime { get; set; }
 
     /// <summary>

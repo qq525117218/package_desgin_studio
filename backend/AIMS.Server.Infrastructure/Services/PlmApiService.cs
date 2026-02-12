@@ -35,8 +35,7 @@ public class PlmApiService : IPlmApiService
                 .PostJsonAsync(payload);
 
             var responseString = await response.GetStringAsync();
-
-            // ✅ 核心重构：直接使用 PlmResponse<T> 泛型解析
+            
             var plmResult = JsonConvert.DeserializeObject<PlmResponse<List<BrandDto>>>(responseString);
             // 健壮性检查
             if (plmResult == null) throw new Exception("PLM 响应为空");
@@ -145,8 +144,7 @@ public class PlmApiService : IPlmApiService
 
             var responseString = await response.GetStringAsync();
 
-            // 5. 反序列化 ✅ [修正]
-            // 既然 JSON 的 data 是 [ { ... } ]，这里必须用 List 接住
+            // 5.  既然 JSON 的 data 是 [ { ... } ]，这里必须用 List 接住
             var plmResult = JsonConvert.DeserializeObject<PlmResponse<List<ProductInfoDto>>>(responseString);
 
             // 6. 校验结果
@@ -154,8 +152,7 @@ public class PlmApiService : IPlmApiService
             // 注意：有些接口 code=0 代表成功，success=true 也代表成功，这里双重校验
             if (!plmResult.Success) throw new Exception($"PLM 业务异常: {plmResult.Message}");
 
-            // 7. 返回数据 ✅ [修正]
-            // 取列表第一条，如果 data 为空数组则返回空对象
+            // 7. 取列表第一条，如果 data 为空数组则返回空对象
             var firstItem = plmResult.Data?.FirstOrDefault();
         
             return firstItem ?? new ProductInfoDto();

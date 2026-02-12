@@ -19,11 +19,9 @@ public class RedisService : IRedisService
         await db.StringSetAsync(key, JsonSerializer.Serialize(value), expiry);
     }
 
-    // ✅ 新增：原子锁实现
     public async Task<bool> SetNxAsync<T>(string key, T value, TimeSpan expiry)
     {
         var db = _redis.GetDatabase();
-        // When.NotExists 保证了操作的原子性
         return await db.StringSetAsync(key, JsonSerializer.Serialize(value), expiry, When.NotExists);
     }
 

@@ -29,8 +29,7 @@ public static class WestmoonSignUtil
             {
                 continue; 
             }
-
-            // ✅ 核心修复：移除对 String 的特殊判断
+            
             // 统一使用 ToString(Formatting.None) 确保字符串包含引号 (例如 "SKU123")
             // 这样 code="SKU123" 才能符合 a="a" 的规则
             string valueStr = property.Value.ToString(Formatting.None);
@@ -57,7 +56,6 @@ public static class WestmoonSignUtil
         sb.Append(timestamp).Append('&').Append(secret);
 
         // 5. 计算哈希
-        // 建议在本地调试时 Console.WriteLine(sb.ToString()) 确认拼接串是否符合预期
         return ComputeSHA256(sb.ToString());
     }
 

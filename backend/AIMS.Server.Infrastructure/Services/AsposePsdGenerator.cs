@@ -177,11 +177,7 @@ public class AsposePsdGenerator : IPsdGenerator
         }
     }
 
-    // ====================================================================================
-    // ⬇️ 修复方法：EmbedFixedAssetAsSmartObject
-    // 原理：强制像素注入。不再依赖 ReplaceContents，直接把像素写死到图层里，保证尺寸绝对正确。
-    // ====================================================================================
-
+ 
     private void EmbedFixedAssetAsSmartObject(string targetPsdPath, string assetPath, PackagingDimensions dim)
     {
         if (!File.Exists(assetPath)) return;
@@ -250,9 +246,7 @@ public class AsposePsdGenerator : IPsdGenerator
         }
     }
 
-    // ====================================================================================
-    // ⬇️ 其他核心逻辑 (保持不变)
-    // ====================================================================================
+   
 
     private void EmbedBarcodePdfAsSmartObject(string targetPsdPath, string pdfPath, PackagingDimensions dim)
     {
@@ -349,8 +343,7 @@ public class AsposePsdGenerator : IPsdGenerator
 
     private void EmbedLogoAsSmartObject(string targetPsdPath, string assetPath, PackagingDimensions dim)
     {
-        // 这里的逻辑也建议使用 Pixel Injection 模式以确保万无一失，但为了保持代码改动最小化，
-        // 且 Logo 问题未被报告，暂保持原样。如果 Logo 也变小了，请使用 EmbedFixedAssetAsSmartObject 相同的方法。
+      
         if (!File.Exists(assetPath)) return;
         string tempOutputPath = targetPsdPath + ".tmp";
         using (var targetImage = (PsdImage)Aspose.PSD.Image.Load(targetPsdPath))
@@ -415,8 +408,6 @@ public class AsposePsdGenerator : IPsdGenerator
 
         // 背面面板 (Back Panel)
         // 位置: A (粘口) + Z (左侧) + X (正面) + Z (右侧) = 背面起始
-        // 注意：这里的顺序取决于你的盒型结构，通常顺序是: 粘口-左-正-右-背
-        // 代码中你原本用的是 A + 2*Z + X，这对应的是第4个面
         int panelLeft = A + (2 * Z) + X;
         int panelWidth = X;
 
@@ -431,7 +422,6 @@ public class AsposePsdGenerator : IPsdGenerator
 
     private void DrawStructureLayers(PsdImage psdImage, int X, int Y, int Z, int A, int B, int C, Action<int, string>? onProgress)
     {
-        // ... (保持原样) ...
         CreateShapeLayer(psdImage, "BG", (2 * X) + (2 * Z) + (2 * A), Y + (4 * C), 0, B + Z - (2 * C), Color.White);
         CreateShapeLayer(psdImage, "left", A + X, Y + (4 * C), 0, B + Z - (2 * C), Color.White);
         CreateShapeLayer(psdImage, "front", X, Y + (4 * C), A + Z, B + Z - (2 * C), Color.White);
@@ -443,8 +433,7 @@ public class AsposePsdGenerator : IPsdGenerator
 
     private void DrawInfoPanelAssets(PsdImage psdImage, PackagingAssets assets, PackagingDimensions dim)
     {
-        // ... (保持原样，省略以节省空间，确保使用上面的完整逻辑) ...
-        // 请保留原方法内容
+  
         var info = assets.Texts.InfoPanel;
         var main = assets.Texts.MainPanel;
         if (info == null && main == null) return;
@@ -497,7 +486,7 @@ public class AsposePsdGenerator : IPsdGenerator
 
     private void DrawMainPanelAssets(PsdImage psdImage, PackagingAssets assets, PackagingDimensions dim)
     {
-        // ... (保持原样) ...
+   
         var main = assets.Texts.MainPanel;
         var info = assets.Texts.InfoPanel;
         if (main == null) return;
@@ -530,7 +519,7 @@ public class AsposePsdGenerator : IPsdGenerator
 
     private void AddGuidelines(PsdImage psdImage, int X, int Y, int Z, int A, int B, int C)
     {
-        // ... (保持原样) ...
+  
         var horizontalWidth = 2 * X + 2 * Z + 2 * A;
         var verticalHeight = Y + 2 * Z + 2 * B - 4 * C;
         var topIndex = psdImage.Layers.Length;
